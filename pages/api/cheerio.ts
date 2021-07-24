@@ -3,7 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 import cheerio from 'cheerio';
 import axios, { Method } from 'axios';
 import psl, { ParsedDomain } from 'psl';
-import puppeteer from 'puppeteer';
+import puppeteer, { errors } from 'puppeteer';
 
 type Data = {
   result?: any,
@@ -111,7 +111,7 @@ const getImageSearchString = (title: string, url: string, siteName?: string) => 
 
 }
 
-const getBingImageSearchResults = async (search: string) => {
+const getBingImageSearch = async (search: string): Promise<{ results?: Array<any>, error?: any }> => {
   const subscriptionKey = 'bbbfaff3366740ea82827de1a00c389c';
   const url = 'https://api.bing.microsoft.com/v7.0/images/search';
   if (search) {
@@ -122,8 +122,16 @@ const getBingImageSearchResults = async (search: string) => {
       'Ocp-Apim-Subscription-Key' : subscriptionKey,
       }
     }
-    const res = await axios(config);
-    return res.data.value;
+    try {
+      const res = await axios(config);
+      return {
+        results: res.data.value
+      }
+    } catch (error) {
+      return {
+        error: error
+      }
+    }
   } else {
     throw new Error("No search string for image");
   }
@@ -136,14 +144,19 @@ export default async (req: NextApiRequest, res: NextApiResponse<Data>) => {
   // Get images for root domain
   let rootDomainImageUrls:Array<string> = [];
   let imageSearchString:string = "";
+  let errors:Array<any> = [];
   const rootDomain = psl.get(extractHostname(targetUrl));
   if (rootDomain) {
     const parsed = psl.parse(rootDomain);
     if (!parsed.error) {
       if (parsed.sld) {
         imageSearchString = parsed.sld;
-        const imageSearchResults = await getBingImageSearchResults(imageSearchString);
-        rootDomainImageUrls = imageSearchResults.map((imageResult: { contentUrl: string; }) => imageResult.contentUrl)
+        const imageSearch = await getBingImageSearch(imageSearchString);
+        if (imageSearch.results) {
+          rootDomainImageUrls = imageSearch.results.map((imageResult: { contentUrl: string; }) => imageResult.contentUrl)
+        } else {
+          errors.push(imageSearch.error);
+        }
       } else {
         throw Error("sld not found");
       }
@@ -158,24 +171,37 @@ export default async (req: NextApiRequest, res: NextApiResponse<Data>) => {
   const result = await scrapeMetatags(targetUrl);
 
   if (result.data) {
+
     imageSearchString = getImageSearchString(result.data.title, result.data.url, result.data.siteName);
-    const imageSearchResults = await getBingImageSearchResults(imageSearchString);
-    let imageUrls = imageSearchResults.map((imageResult: { contentUrl: string; }) => imageResult.contentUrl);
-    // Add in some of the root domain images
-    imageUrls.splice(2, 0, rootDomainImageUrls[0]);
-    imageUrls.splice(5, 0, rootDomainImageUrls[1]);
-    imageUrls.splice(10, 0, rootDomainImageUrls[2]);
-    return res.status(200).json({
-      result: result,
-      imageSearchString: imageSearchString,
-      imageUrls: imageUrls
-    })
+    const imageSearch = await getBingImageSearch(imageSearchString);
+    if (imageSearch.results) { 
+      let imageUrls = imageSearch.results.map((imageResult: { contentUrl: string; }) => imageResult.contentUrl);
+      // Add in some of the root domain images
+      imageUrls.splice(2, 0, rootDomainImageUrls[0]);
+      imageUrls.splice(5, 0, rootDomainImageUrls[1]);
+      imageUrls.splice(10, 0, rootDomainImageUrls[2]);
+      return res.status(200).json({
+        result: result,
+        imageSearchString: imageSearchString,
+        imageUrls: imageUrls
+      })
+    } else {
+      errors.push(imageSearch.error);
+      return res.status(200).json({
+        errors: errors,
+        imageSearchString: imageSearchString,
+        imageUrls: rootDomainImageUrls
+      });
+    }
+
   } else {
-    // Fallback to just show root domain images
+    // Fallback to just show root domain images if they exist and any errors
+    errors.push(result.errors);
     return res.status(200).json({
-      errors: result.errors,
+      errors: errors,
       imageSearchString: imageSearchString,
       imageUrls: rootDomainImageUrls
     });
   }
+
 }
