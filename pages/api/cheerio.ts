@@ -9,7 +9,7 @@ type Data = {
   result?: any,
   errors?: Array<any>,
   imageSearchString?: string,
-  imageSearchResult?: any
+  imageUrls?: Array<string>
 }
 
 const scrapeMetatags = async (url: string) => {
@@ -103,7 +103,7 @@ const getImageSearchString = (title: string, url: string, siteName?: string) => 
   const siteNameRegEx = new RegExp(siteNameSearchMask, 'ig');
   const noSiteName = noRootDomain.replace(siteNameRegEx, '');
 
-  const noSpecialChars = noSiteName.replace(/[&\/\\#,+()$~%.'":*?<>{}|]/g, ' ');
+  const noSpecialChars = noSiteName.replace(/[&\/\\#,+()$~%.'":*?<>{}|—]/g, ' ');
 
   const imageSearchString = noSpecialChars.trim();
 
@@ -111,7 +111,7 @@ const getImageSearchString = (title: string, url: string, siteName?: string) => 
 
 }
 
-const getBingImageSearchResult = async (search: string) => {
+const getBingImageSearchResults = async (search: string) => {
   const subscriptionKey = 'bbbfaff3366740ea82827de1a00c389c';
   const url = 'https://api.bing.microsoft.com/v7.0/images/search';
   if (search) {
@@ -131,48 +131,51 @@ const getBingImageSearchResult = async (search: string) => {
 
 export default async (req: NextApiRequest, res: NextApiResponse<Data>) => {
 
-  const targetUrl = 'https://www.amazon.co.uk/dp/B07747FR44/ref=gw_uk_mso_desk_eink_moo?pf_rd_r=89P9691SR5RH435ZNGE2&pf_rd_p=ccb08224-22f0-42a4-9d43-a6cf2e0de0e4&pd_rd_r=4cc7718c-a139-4313-8408-888841e4f0dd&pd_rd_w=nT05B&pd_rd_wg=BQU1b&ref_=pd_gw_unk'
+  const targetUrl = 'https://www.netflix.com/gb/';
 
+  // Get images for root domain
+  let rootDomainImageUrls:Array<string> = [];
+  let imageSearchString:string = "";
+  const rootDomain = psl.get(extractHostname(targetUrl));
+  if (rootDomain) {
+    const parsed = psl.parse(rootDomain);
+    if (!parsed.error) {
+      if (parsed.sld) {
+        imageSearchString = parsed.sld;
+        const imageSearchResults = await getBingImageSearchResults(imageSearchString);
+        rootDomainImageUrls = imageSearchResults.map((imageResult: { contentUrl: string; }) => imageResult.contentUrl)
+      } else {
+        throw Error("sld not found");
+      }
+    } else {
+      throw Error(JSON.stringify(parsed.error));
+    }
+  } else {
+    throw Error("Root domain not found");
+  }
+
+  // Get images specific to given url
   const result = await scrapeMetatags(targetUrl);
+
   if (result.data) {
-    const imageSearchString = getImageSearchString(result.data.title, result.data.url, result.data.siteName);
-    const imageSearchResult = await getBingImageSearchResult(imageSearchString);
+    imageSearchString = getImageSearchString(result.data.title, result.data.url, result.data.siteName);
+    const imageSearchResults = await getBingImageSearchResults(imageSearchString);
+    let imageUrls = imageSearchResults.map((imageResult: { contentUrl: string; }) => imageResult.contentUrl);
+    // Add in some of the root domain images
+    imageUrls.splice(2, 0, rootDomainImageUrls[0]);
+    imageUrls.splice(5, 0, rootDomainImageUrls[1]);
+    imageUrls.splice(10, 0, rootDomainImageUrls[2]);
     return res.status(200).json({
       result: result,
       imageSearchString: imageSearchString,
-      imageSearchResult: imageSearchResult
+      imageUrls: imageUrls
     })
   } else {
-    const rootDomain = psl.get(extractHostname(targetUrl));
-    if (rootDomain) {
-      const parsed = psl.parse(rootDomain);
-      if (!parsed.error) {
-        if (parsed.sld) {
-          const imageSearchResult = await getBingImageSearchResult(parsed.sld);
-          return res.status(200).json({
-            errors: result.errors,
-            imageSearchResult: imageSearchResult
-          });
-        } else {
-          const errors = result.errors;
-          errors.push("sld not found");
-          return res.status(200).json({
-            errors: errors
-          });
-        }
-      } else {
-        const errors = result.errors;
-        errors.push(parsed.error);
-        return res.status(200).json({
-          errors: errors
-        });
-      }
-    } else {
-      const errors = result.errors;
-      errors.push("root domain not found");
-      return res.status(200).json({
-        errors: errors
-      });
-    }
+    // Fallback to just show root domain images
+    return res.status(200).json({
+      errors: result.errors,
+      imageSearchString: imageSearchString,
+      imageUrls: rootDomainImageUrls
+    });
   }
 }
