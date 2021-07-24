@@ -190,6 +190,8 @@ export default async (req: NextApiRequest, res: NextApiResponse<Data>) => {
       imageUrls.splice(2, 0, rootDomainImageUrls[0]);
       imageUrls.splice(5, 0, rootDomainImageUrls[1]);
       imageUrls.splice(10, 0, rootDomainImageUrls[2]);
+      imageUrls.splice(15, 0, rootDomainImageUrls[3]);
+      imageUrls.splice(20, 0, rootDomainImageUrls[4]);
       return res.status(200).json({
         result: result,
         imageSearchString: imageSearchString,
