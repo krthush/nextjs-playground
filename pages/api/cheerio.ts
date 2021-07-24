@@ -99,11 +99,12 @@ const getImageSearchString = (title: string, url: string, siteName?: string) => 
     noRootDomain = title.replace(domainRegEx, '');
   }
 
-  const siteNameSearchMask = siteName ? siteName : '';
-  const siteNameRegEx = new RegExp(siteNameSearchMask, 'ig');
-  const noSiteName = noRootDomain.replace(siteNameRegEx, '');
+  // Can remove site name here for more specificity but generally leads to worse results
+  // const siteNameSearchMask = siteName ? siteName : '';
+  // const siteNameRegEx = new RegExp(siteNameSearchMask, 'ig');
+  // const noSiteName = noRootDomain.replace(siteNameRegEx, '');
 
-  const noSpecialChars = noSiteName.replace(/[&\/\\#,+()$~%.'":*?<>{}|—]/g, ' ');
+  const noSpecialChars = noRootDomain.replace(/[&\/\\#,+()$~%.'":*?<>{}|—]/g, ' ');
 
   const imageSearchString = noSpecialChars.trim();
 
@@ -112,7 +113,7 @@ const getImageSearchString = (title: string, url: string, siteName?: string) => 
 }
 
 const getBingImageSearch = async (search: string): Promise<{ results?: Array<any>, error?: any }> => {
-  const subscriptionKey = 'bbbfaff3366740ea82827de1a00c389c';
+  const subscriptionKey = process.env.AZURE_BING_SEARCH_KEY;
   const url = 'https://api.bing.microsoft.com/v7.0/images/search';
   if (search) {
     const config = {
@@ -137,9 +138,19 @@ const getBingImageSearch = async (search: string): Promise<{ results?: Array<any
   }
 }
 
+const mergeImageUrls = (array1:Array<string>, array2:Array<string>) => {
+  let imageUrls:Array<string> = [];
+  const l = Math.min(array1.length, array2.length);    
+  for (let i = 0; i < l; i++) {
+    imageUrls.push(array1[i], array2[i]);
+  }
+  imageUrls.push(...array1.slice(l), ...array2.slice(l));
+  return imageUrls;
+}
+
 export default async (req: NextApiRequest, res: NextApiResponse<Data>) => {
 
-  const targetUrl = 'https://www.netflix.com/gb/';
+  const targetUrl = 'https://www.patreon.com/guweiz?fbclid=IwAR0RRxYLqIL2zwlnZ2NKlTEisZNM3vpf07t2rxw-6U_LI6_xcsiAMwSzStM';
 
   // Get images for root domain
   let rootDomainImageUrls:Array<string> = [];
@@ -171,11 +182,10 @@ export default async (req: NextApiRequest, res: NextApiResponse<Data>) => {
   const result = await scrapeMetatags(targetUrl);
 
   if (result.data) {
-
     imageSearchString = getImageSearchString(result.data.title, result.data.url, result.data.siteName);
     const imageSearch = await getBingImageSearch(imageSearchString);
     if (imageSearch.results) { 
-      let imageUrls = imageSearch.results.map((imageResult: { contentUrl: string; }) => imageResult.contentUrl);
+      const imageUrls = imageSearch.results.map((imageResult: { contentUrl: string; }) => imageResult.contentUrl);
       // Add in some of the root domain images
       imageUrls.splice(2, 0, rootDomainImageUrls[0]);
       imageUrls.splice(5, 0, rootDomainImageUrls[1]);
@@ -186,6 +196,7 @@ export default async (req: NextApiRequest, res: NextApiResponse<Data>) => {
         imageUrls: imageUrls
       })
     } else {
+      // Fallback to just show root domain images if they exist and any errors
       errors.push(imageSearch.error);
       return res.status(200).json({
         errors: errors,
@@ -193,7 +204,6 @@ export default async (req: NextApiRequest, res: NextApiResponse<Data>) => {
         imageUrls: rootDomainImageUrls
       });
     }
-
   } else {
     // Fallback to just show root domain images if they exist and any errors
     errors.push(result.errors);
