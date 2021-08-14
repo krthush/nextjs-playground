@@ -3,7 +3,9 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 import cheerio from 'cheerio';
 import axios, { Method } from 'axios';
 import psl, { ParsedDomain } from 'psl';
-import puppeteer, { errors } from 'puppeteer';
+import puppeteer from 'puppeteer-extra';
+import { errors } from 'puppeteer';
+import StealthPlugin from 'puppeteer-extra-plugin-stealth';
 
 type Data = {
   result?: any,
@@ -36,6 +38,17 @@ const scrapeMetatags = async (url: string) => {
     errors.push(error);
   }
 
+  if (!html) { // Additional fallback using stealth puppeteer for sites such as https://www.fiverr.com/sorich1/fix-bugs-and-build-any-laravel-php-and-vuejs-projects, https://www.netflix.com/gb/title/70136120
+
+    await puppeteer.use(StealthPlugin()).launch().then(async browser => {
+      const page = await browser.newPage();;
+      await page.goto(url, { waitUntil: 'networkidle0' });
+      html = await page.evaluate(() => document.querySelector('*')?.outerHTML);
+      await browser.close();
+    });
+
+  }
+
   if (html) {
 
     const $ = cheerio.load(html);
@@ -60,14 +73,11 @@ const scrapeMetatags = async (url: string) => {
     }
 
   } else {
-
-    // Could have additional fallbacks here (tried using puppeteer for sites such as https://www.fiverr.com/, still did not pass the robots)
-
     return {
       errors: errors
     }
-
   }
+
 }
 
 function extractHostname(url: string) {
@@ -150,7 +160,7 @@ const mergeImageUrls = (array1:Array<string>, array2:Array<string>) => {
 
 export default async (req: NextApiRequest, res: NextApiResponse<Data>) => {
 
-  const targetUrl = 'https://www.patreon.com/guweiz?fbclid=IwAR0RRxYLqIL2zwlnZ2NKlTEisZNM3vpf07t2rxw-6U_LI6_xcsiAMwSzStM';
+  const targetUrl = 'https://www.netflix.com/gb/title/70136120';
 
   // Get images for root domain
   let rootDomainImageUrls:Array<string> = [];
@@ -183,23 +193,33 @@ export default async (req: NextApiRequest, res: NextApiResponse<Data>) => {
 
   if (result.data) {
     imageSearchString = getImageSearchString(result.data.title, result.data.url, result.data.siteName);
-    const imageSearch = await getBingImageSearch(imageSearchString);
-    if (imageSearch.results) { 
-      const imageUrls = imageSearch.results.map((imageResult: { contentUrl: string; }) => imageResult.contentUrl);
-      // Add in some of the root domain images
-      imageUrls.splice(2, 0, rootDomainImageUrls[0]);
-      imageUrls.splice(5, 0, rootDomainImageUrls[1]);
-      imageUrls.splice(10, 0, rootDomainImageUrls[2]);
-      imageUrls.splice(15, 0, rootDomainImageUrls[3]);
-      imageUrls.splice(20, 0, rootDomainImageUrls[4]);
-      return res.status(200).json({
-        result: result,
-        imageSearchString: imageSearchString,
-        imageUrls: imageUrls
-      })
+    if (imageSearchString) {
+      const imageSearch = await getBingImageSearch(imageSearchString);
+      if (imageSearch.results) { 
+        const imageUrls = imageSearch.results.map((imageResult: { contentUrl: string; }) => imageResult.contentUrl);
+        // Add in some of the root domain images
+        imageUrls.splice(2, 0, rootDomainImageUrls[0]);
+        imageUrls.splice(5, 0, rootDomainImageUrls[1]);
+        imageUrls.splice(10, 0, rootDomainImageUrls[2]);
+        imageUrls.splice(15, 0, rootDomainImageUrls[3]);
+        imageUrls.splice(20, 0, rootDomainImageUrls[4]);
+        return res.status(200).json({
+          result: result,
+          imageSearchString: imageSearchString,
+          imageUrls: imageUrls
+        })
+      } else {
+        // Fallback to just show root domain images if they exist and any errors
+        errors.push(imageSearch.error);
+        return res.status(200).json({
+          errors: errors,
+          imageSearchString: imageSearchString,
+          imageUrls: rootDomainImageUrls
+        });
+      }
     } else {
       // Fallback to just show root domain images if they exist and any errors
-      errors.push(imageSearch.error);
+      errors.push(result.errors);
       return res.status(200).json({
         errors: errors,
         imageSearchString: imageSearchString,
